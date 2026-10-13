@@ -8,15 +8,18 @@ on:
 env:
   GCP_PROJECT_ID: "utec-posgrado-01"
   GCP_REGION: "us-central1"
-  ARTIFACT_REGISTRY_REPO: ${{ vars.ARTIFACT_REGISTRY_REPO }}
+  ARTIFACT_REGISTRY_REPO: "app-elampssy"
 
 jobs:
+  # 1. Construcción y despliegue inicial / Canary
   build_and_canary:
     environment: dev
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
       id-token: write
+
     outputs:
       is_first_deploy: ${{ steps.check_service.outputs.is_first_deploy }}
 
@@ -28,19 +31,14 @@ jobs:
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
-          project_id: ${{ env.GCP_PROJECT_ID }}
+          service_account: "github-actions-elampssy@utec-posgrado-01.iam.gserviceaccount.com"
+          project_id: "utec-posgrado-01"
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Verificar identidad de despliegue
-        env:
-          CONFIGURED_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
         run: |
-          echo "Cuenta configurada en GitHub:"
-          printf '%s\n' "$CONFIGURED_SERVICE_ACCOUNT"
-
           echo "Cuenta activa de gcloud:"
           gcloud auth list \
             --filter=status:ACTIVE \
@@ -125,22 +123,27 @@ jobs:
               --to-revisions="$PREVIOUS_REV=90,$CANARY_REV=10"
           fi
 
+  # 2. Promoción del Canary
   promote_or_rollback:
     needs: build_and_canary
     if: needs.build_and_canary.outputs.is_first_deploy == 'false'
     environment: dev
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
       id-token: write
 
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
       - name: Google Auth (Workload Identity Federation)
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
-          project_id: ${{ env.GCP_PROJECT_ID }}
+          service_account: "github-actions-elampssy@utec-posgrado-01.iam.gserviceaccount.com"
+          project_id: "utec-posgrado-01"
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
@@ -161,22 +164,27 @@ jobs:
             --region="$GCP_REGION" \
             --to-revisions="$CANARY_REV=100"
 
+  # 3. Rollback si la promoción falla o se cancela
   rollback_canary:
     needs: [build_and_canary, promote_or_rollback]
     if: always() && needs.build_and_canary.outputs.is_first_deploy == 'false' && (needs.promote_or_rollback.result == 'failure' || needs.promote_or_rollback.result == 'cancelled')
     environment: dev
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
       id-token: write
 
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
       - name: Google Auth (Workload Identity Federation)
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
-          project_id: ${{ env.GCP_PROJECT_ID }}
+          service_account: "github-actions-elampssy@utec-posgrado-01.iam.gserviceaccount.com"
+          project_id: "utec-posgrado-01"
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
